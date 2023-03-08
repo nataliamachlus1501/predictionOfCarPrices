@@ -1,0 +1,626 @@
+---
+title: "Projekt"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r}
+library(GGally)
+library(ggplot2)
+library(measurements)
+library(multcomp)
+library(dplyr)
+```
+
+# Wstęp
+
+Celem projektu jest skonstruowanie modelu predykcyjnego przewidującego ceny samochodów za pomocą podanych zmiennych. 
+
+# Zbiór danych
+
+```{r}
+train <- read.csv("C:/Users/natal/Desktop/Wnioskowanie stat 2/train.csv")
+```
+
+Dane dotyczą samochodów z 2005 roku. Cena detaliczna samochodów została obliczona w oparciu o edycję Kelly Blue Book z roku 2005. 
+
+## Zmienne
+
+**Mileage:** liczba mil przejechana przez samochód
+**Make:** wytwórca samochodu (np. Saturn, Pontiac, Chevrolet)
+**Model:** model specyficzny dla każdego wytwórcy (np. Ion, Vibe, Cavalier)
+**Trim:** typ modelu samochodu (np. SE Sedan 4D, Quad Coupe 2D)
+**Type:** rodzaj nadwozia (np. sedan, coupe, etc.)
+**Cylinder:** liczba cylidrów silnika
+**Liter:** pojemność silnika
+**Doors:** liczba drzwi
+**Cruise:**  indykator wskazujący czy samochód jest wyposażony w tempomat (1 = tempomat)        
+**Sound:** indykator wskazujący czy samochód ma ulepszone głośniki (1 = ulepszone)        
+**Leather:** indykator wskazujący czy samochód ma skórzane siedzenia (1 = skórzane siedzenia) 
+
+# Czyszczenie danych
+
+**Braki danych**
+
+```{r}
+
+sapply(train, function(x) sum(is.na(x)))
+```
+
+Jak widać żadna kolumna nie posiada wartości NA.
+
+**Typ danych**
+
+```{r}
+
+str(train)
+```
+
+Dane mają 13 kolumn oraz 643 wiersze.  Widzimy, że niektore zmienne są typu "chr", w takim formacie nie moglibyśmy uwzględnić ich w modelu. Ponadto zmienne zerojedynkowe(np Cruise,Sound,Leather) oraz posiadające tylko kilka wartości(np Doors,Cylinder) warto byłoby zamienić na typ factor.
+
+Sprawdźmy jak wyglądają poszczególne zmienne:
+
+```{r}
+unique(train$Make)
+#6 różnych wartości
+```
+```{r}
+unique(train$Model)
+#bardzo dużo różnych wartości
+```
+```{r}
+unique(train$Trim)
+#bardzo dużo różnych wartości
+```
+```{r}
+unique(train$Type)
+#5 różnych wartości
+```
+```{r}
+unique(train$Doors)
+```
+
+```{r}
+unique(train$Cylinder)
+```
+
+**Zamiana odpowiednich zmiennych**
+
+
+```{r}
+train <- train %>%
+  mutate(Make = as.factor(Make),
+         Model = as.factor(Model),
+         Trim= as.factor(Trim),
+         Type = as.factor(Type),
+         Doors = as.factor(Doors),
+         Cylinder = as.factor(Cylinder),
+         Cruise = factor(Cruise, levels = c(`No` = 0, Yes = 1), 
+                        labels = c("No", "Yes")),
+         Sound= factor(Sound, levels = c(`No` = 0, Yes = 1), 
+                        labels = c("No", "Yes")),
+         Leather = factor(Leather, levels = c(`No` = 0, Yes = 1), 
+                        labels = c("No", "Yes"))) %>%  select(-X)
+
+#zmienna X jest identyfikatorem danego samochodu, możemy ją usunąć.
+str(train)
+```
+
+# Podstawowe statystyki
+
+```{r}
+#podsumowanie danych
+
+lapply(train, summary)
+```
+
+Widzimy że analiza została przeprowadzona dla 643 samochodów. Możemy zaobserwować, że cena samochodów waha się od około  8639  jednostek monetarnych do niemalże 69134. Przy czym połowa samochodów jest wyceniona na 14196-27269 z medianą 18169. Liczba przejechanych mil wynosi od 266 do 50387. Minimalna liczba cylindrów to 4 a maksymalna 8. Minimalna pojemność silnika to 1.600 natomianst maksymalna 6. Najmniejsza możliwa liczba drzwi w samochodzie to 2 a największa 4.
+
+
+```{r}
+
+print("Zmienna Doors")
+table(train$Doors)
+
+print("Zmienna Cylinder")
+table(train$Cylinder)
+```
+
+# Eksploracyjna  analiza danych
+
+```{r}
+ggplot(train, aes(x=Price)) +
+  geom_histogram(position="identity", alpha=0.5, fill = "darkblue")
+```
+
+Z danego histogramu widzimy że większość samochodów ma cenę poniżej 50000.
+
+
+
+```{r}
+ggplot(train, aes(x=Mileage)) +
+  geom_histogram(position="identity", alpha=0.5, fill = "lightblue")
+```
+
+Najwięcej samochodów ma przejechane od 10000 do 30000 km. Zmienna Mileage ma rozkład zbliżony do normalnego.
+
+
+```{r}
+ggplot(data = train, aes(x=Make, fill = Make)) +
+  geom_bar() + labs(x='Wytwórca samochodu') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+Mamy najwięcej danych dla wytwórcy samochodów Chevrolet.
+
+
+```{r}
+ggplot(data = train, aes(x=Type, fill = Type)) +
+  geom_bar() + labs(x='Typ samochodu') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+Mamy najwięcej danych dla typu samochodu Sedan.
+
+
+Zoabczmy również wykres korelacji dla wszystkich zmiennych:
+
+```{r}
+
+cor_all <- train
+cor_all <- cor_all %>%
+  mutate(Make = as.numeric(Make)) %>%
+  mutate(Model = as.numeric(Model)) %>%
+  mutate(Trim = as.numeric(Trim)) %>%
+  mutate(Type = as.numeric(Type)) %>%
+  mutate(Doors = as.numeric(Doors)) %>%
+  mutate(Cylinder = as.numeric(Cylinder)) %>%
+  mutate(Cruise = as.numeric(Cruise)) %>%
+  mutate(Sound = as.numeric(Sound)) %>%
+  mutate(Leather = as.numeric(Leather))
+
+ggcorr(cor_all, label = TRUE, label_size = 3.5, hjust = 1, layout.exp = 1, label_alpha = TRUE,label_round = 2, color = "grey50")
+#label_alpha = TRUE
+```
+
+Z wykresu korelacji Pearsona widzimy że najbardziej skorelowane ze zmienną price są zmienne: Cylinder (0.58), Liter(0.56). Ponadto widzimy że zmienne Cylinder oraz Liter są bardzo mocno ze sobą skorelowane (współczynnik korelacji wynosi aż 0.96), obie zmienne dotyczą silnika samochodu. Zmienna Model ma bardzo mały współczynnik korelacji ze zmienną celu Price (0.05), możliwe że nie warto uwzględniać jej w modelu predykcyjnym. Jest ona skorelowana natomiast ze zmienna Cylinder oraz Liter. Zmienna Cruise ma dość wysoki współczynnik korelacji ze zmienną Price.
+
+
+```{r}
+
+ggplot(train, aes(x = Cylinder, y = Price)) +geom_point() 
+```
+Można odczytać z wykresu że najwyższą cenę mają samochody z ośmioma cylindrami.
+
+
+```{r}
+
+ggplot(train, aes(x = Cruise, y = Price)) +geom_point() 
+```
+Samochód posiadający tempomat jest droższy.
+
+
+```{r}
+ggplot(train, aes(x = Leather, y = Price)) +geom_point() 
+```
+
+Samochody o skórzanych siedzeniach są droższe.
+
+
+```{r}
+ggplot(train, aes(x = Sound, y = Price)) +geom_point() 
+```
+
+Droższe są samochody o ulepszonych głośnikach.
+
+
+```{r}
+
+ggplot(train, aes(x = Make, y = Price)) +geom_point() 
+```
+Samochody wytwórcy Cadillac są widocznie droższe od pozostałych.
+
+```{r}
+ggplot(train, aes(x = Type, y = Price)) +geom_point()
+```
+Widać zróżnicowanie cenowe dla poszczególnych typów. Najdroższe są samochody typu Convertible (kabriolety).
+
+
+```{r}
+
+ggplot(train, aes(x = Liter, y = Price)) +geom_point() +geom_smooth(method = "lm")
+```
+
+Im większa pojemność silnika tym samochód droższy.
+
+
+```{r}
+ggplot(train, aes(x = Mileage, y = Price)) +geom_point() +geom_smooth(method = "lm")
+```
+
+Z wykresu wynika że im większy przebieg ma dany samochód tym jest tańszy. Widzimy też pewne obserwacje odstające jednak po ich sprawdzeniu widzimy że są to samochody wcześniej ustalonego najdroższego wytwórcy oraz typu:
+
+```{r}
+train[which(train$Price >= 50000),]
+```
+
+
+Najpierw tworzymy model, który objaśnia `Price` przez wszystkie zmienne `.
+
+```{r}
+model_all <- lm(Price ~ . , data = train)
+summary(model_all)
+```
+
+Patrzymy na kolumnę Pr(>|t|) w podsumowaniu, pokazuje ona znaczenie danej zmiennej w modelu. Jeżeli wartość jest mniejsza od 0.05 to można uznać że ta zmienna ma znaczący efekt w modelu.
+
+```{r}
+par(mfrow=c(2, 2))
+plot(model_all)
+```
+
+
+W celu selekcji predykatorów z pełnego modelu użyjemy kryterium AIC, wykorzystując wsteczną eliminację. Proces polega na tym że ze wszystkich użytych predykatorów model jest zmieniany przez ich redukcję tak aby wartość AIC była najmniejsza.
+
+
+```{r}
+model_aic <- step(model_all)
+summary(model_aic)
+```
+
+```{r}
+par(mfrow=c(2, 2))
+plot(model_aic)
+```
+
+Model wybrany przez kryterium AIC wykluczył zmienne Doors, Make, Type, Liter oraz Cylinder. Prezentuje się niezbyt obiecująco. Z pierwszego wykresu widzimy że jest on dość dobrze dopasowany, ale rozkład reszt nie jest normalny, widać ciężki ogon. Wygląda na to że istnieje problem heteroskedastyczności.
+
+
+
+Teraz tworzymy model, który objaśnia `Price` przez predykator o najsilniejszej asocjacji - `Cylinder`.
+
+```{r}
+model_Cylinder <- lm(Price ~ Cylinder, data = train)
+summary(model_Cylinder)
+```
+
+Poziomem bazowym w naszej analizie jest średnia cena samochodu o czterech cylindrach silnika. Dla samochodu o sześciu cylindrach średnia cena samochodu jest o 2327.9 jednostek monetarnych wyższa, natomiast dla posiadąjcego osiem o 21196.9 wyższa. Według danego modelu efekt liczby cylindrów silnika jest bardzo istotny statystycznie w odniesieniu do ceny samochodów. Współczynnik R^2 pokuzuje że model wyjaśnia okolo 46 % wariancji. Test F informuje nas o tym że utworzony model jest lepszy od modelu zerowego(p-value < 0.05).
+
+```{r}
+par(mfrow=c(2, 2))
+plot(model_Cylinder)
+```
+
+Model jest nawet dobrze dopasowany, wariancja jednak nie jest w stała. Rozkład reszt nie jest normalny.
+
+
+Teraz worzymy model, który objaśnia `Price` przez drugi najsilniejszy predykator - `Liter`.
+
+```{r}
+model_Liter <- lm(Price ~ Liter, data = train)
+summary(model_Liter)
+```
+
+Według danego modelu efekt pojemności silnika jest bardzo istotny statystycznie w odniesieniu do ceny samochodów. Współczynnik R^2 pokuzuje że model wyjaśnia okolo 31 % wariancji. Test F informuje nas o tym że utworzony model jest lepszy od modelu zerowego(p-value < 0.05).
+
+
+```{r}
+par(mfrow=c(2, 2))
+plot(model_Liter)
+```
+
+Ten model jest gorzej dopasowany, wariancja jednak jest w miarę stała. Rozkład reszt nie jest normalny.
+
+Ponieważ obie zmienne dotyczą silnika, sprawdźmy czy między danymi zmiennymi występuje interakcja. Czyli ,czy wpływ zmiennej niezależnej `Cylinder` na zmienną zależną `Price` zmienia się w zależności od poziomu drugiej zmiennej - `Liter`.
+
+
+```{r}
+summary(lm(Price ~ Cylinder*Liter, data = train))
+```
+
+Istnieje interakcja i jest uznana przez model za istotną statystycznie.
+
+```{r}
+par(mfrow=c(2, 2))
+plot(lm(Price ~ Cylinder + Liter, data = train))
+```
+
+```{r}
+par(mfrow=c(2, 2))
+plot(lm(Price ~ Cylinder * Liter, data = train))
+```
+Widzimy że model z interakcją nie poprawił dopasowania modelu - wręcz je pogorszył.
+
+
+Kolejnym rozważanym predykatorem jest zmienna `Cruise`. Na wykresie dało się zauważyć że istnieje widoczna różnica cen między samochodami posiadającymi tempomat oraz nie. Model objaśniający przez nią cenę samochodów prezentuje się następująco:
+
+```{r}
+model <- lm(Price ~ Cruise, data = train)
+summary(model)
+```
+
+Poziomem bazowym jest średnia cena samochodu bez tempomatu. Dla samochodu z tempomatem średnia cena samochodu jest o 10270.6 jednostek monetarnych wyższa. Według danego modelu efekt tempomatu jest bardzo istotny statystycznie w odniesieniu do ceny samochodów. Współczynnik R^2 pokuzuje że model wyjaśnia okolo 19 % wariancji. Test F informuje nas o tym że utworzony model jest lepszy od modelu zerowego(p-value < 0.05).
+
+
+```{r}
+par(mfrow=c(2, 2))
+plot(lm(Price ~ Cruise, data = train))
+```
+
+
+Tworzymy model regresji liniowej uwzględniający wyżej analizowane zmienne. 
+
+```{r}
+model_all <- lm(Price ~ Cylinder + Liter + Cruise, data = train)
+summary(model_all)
+```
+ 
+Dany model wyjaśnia około 54 % wariancji.
+ 
+```{r}
+par(mfrow=c(2, 2))
+plot(model_all)
+```
+
+Z pierwszego wykresu można wnioskować że model jest dobrze dopasowany. Drugi wykres dotyczący reszt przypomina ciężki ogon. Wariancja nie jest stała. Nie jest to najlepszy model.
+
+Sprawdżmy jak prezentuje się model wyjaśniający cenę przez przebieg samochodu:
+
+```{r}
+model <- lm(Price ~ Mileage, data = train)
+summary(model)
+```
+Zmiennna `Mileage` uznana jest za istotną statystycznie. Samochody posiadające większy przebieg są niżej wyceniane.
+
+Podejrzewam interakcję między zmienną `Mileage` a `Liter`, ponieważ samochody o większej pojemności mogą mieć większy przebieg. Również sprawdzam interakcję ze zmienną `Cylinder`.
+
+```{r}
+model <- lm(Price ~ Mileage*Liter, data = train)
+summary(model)
+```
+
+```{r}
+model <- lm(Price ~ Mileage*Cylinder, data = train)
+summary(model)
+```
+
+W obu przypadkach interakcje wyszły istotne statystycznie.
+
+
+```{r}
+model<- lm(Price ~ Mileage + Liter + Cruise , data = train)
+summary(model)
+```
+
+
+```{r}
+par(mfrow=c(2, 2))
+plot(model)
+```
+
+```{r}
+model<- lm(Price ~ Mileage + Cylinder + Cruise , data = train)
+summary(model)
+```
+
+```{r}
+par(mfrow=c(2, 2))
+plot(model)
+```
+
+
+
+```{r}
+model_all <- lm(Price ~ Mileage + Liter + Cylinder + Cruise , data = train)
+summary(model_all)
+```
+
+Po uwzględnieniu w modelu obu zmiennych dotyczących silnika zmienna `Liter` została uznana za nieistotną statystycznie. Zdedycowałam ,że wyeliminuję zmienną `Cylinder` z modelu predykcyjnego, ponieważ jest mniej dokładna niż zmienna `Liter` a obie zmienne dotyczą silnika samochodu.
+
+
+
+```{r}
+par(mfrow=c(2, 2))
+plot(lm(Price ~ Mileage + Liter + Cruise , data = train))
+```
+
+```{r}
+par(mfrow=c(2, 2))
+plot(lm(Price ~ Mileage * Liter + Cruise , data = train))
+```
+
+Dodanie interakcji nie poprawilo znaczaco dopasowania modelu. Ponadto wykres reszt cały czas nie jest normalny. Obecny jest problem heteroskedastyczności.
+
+
+Następnym rozważanym przeze mnie predykatorem jest zmienna `Type`, ponieważ zauważyłam widoczną różnicę cen między różnymi typami samochodów. Model objaśniający przez nią cenę samochodów prezentuje się następująco:
+
+```{r}
+model_Type <- lm(Price ~ Type, data = train)
+summary(model_Type)
+```
+
+```{r}
+par(mfrow=c(2, 2))
+plot(model_Type)
+```
+Podejrzewam interakcję między zmienną Type oraz Mileage, ponieważ samochody określonego typu przeznaczone do jazdy długodystansowej mogą mieć większy przebieg.
+
+```{r}
+model <- lm(Price ~ Type * Mileage, data = train)
+summary(model)
+```
+
+
+Po uwzględnieniu interakcji zmiennej Type w modelu mamy następujące wyniki (interakcja nie jest teraz istotna ):
+
+```{r}
+model <- lm(Price ~ Liter * Mileage * Type + Cruise , data = train)
+summary(model)
+```
+
+```{r}
+par(mfrow=c(2, 2))
+plot(model)
+```
+
+Zauważmy, że dodanie zmiennej Type nie pogorszyło dopasowania modelu. Jednak wykres reszt prezentuje się lepiej. Nadal obecny jest problem heteroskedastyczności.
+
+
+Sprawdźmy jak prezentować się będzie model z uwzględnieniem zmiennej `Make`, ponieważ na wcześniej zaprezentowanym wykresie widoczne były wyższe ceny samochodów dla określonych wytwórców.
+
+```{r}
+model <- lm(Price ~ Liter * Mileage + Cruise + Type + Make, data = train)
+summary(model)
+```
+
+
+```{r}
+par(mfrow=c(2, 2))
+plot(model)
+```
+
+
+Model prezentuje się dużo lepiej. Z pierwszego wykresu widzimy dużo lepsze dopasowanie. Rozkład reszt nie jest jeszcze całkiem normalny, problem heteroskedastyczności zanika.
+
+Po uwzględnieniu zmiennej Make zmienna Cruise została uznana za nieistotną statystycznie. Sprawdźmy jak prezentują się wykresy diagnostyczne po usunięciu tej zmiennej.
+
+```{r}
+par(mfrow=c(2, 2))
+plot(lm(Price ~ Liter * Mileage + Type + Make, data = train))
+```
+
+
+
+Nie zaobserwowałam różnicy na wykresach diagnostycznych, ponadto wyjaśniana przez model wariancja nie zmieniła się po usunięciu zmiennej `Cruise`, więc można usunąć ją z modelu. Aby poprawić model predykcyjny warto byłoby sprawdzić inne predykatory.
+
+Sprawdźmy jak prezentować się będzie model z uwzględnieniem zmiennej `Model`.
+
+```{r}
+model <- lm(Price ~ Liter * Mileage + Type + Make + Model , data = train)
+summary(model)
+```
+
+```{r}
+par(mfrow=c(2, 2))
+plot(lm(Price ~ Liter * Mileage + Type + Make + Model , data = train))
+```
+
+
+
+Po dodaniu zmiennej `Model` reszty mają rozkład bliski normalnemu. Nie mamy już problemu heteroskedastyczności. Sprawdźmy czy dodanie zmiennych wcześniej nie sprawdzonych, które uznałam za wpływające na wyższą cenę samochodu polepszy model. Użyję do tego ponownie kryterium AIC.
+
+```{r}
+model <- lm(Price ~ Liter * Mileage + Type + Make + Model + Doors + Leather + Sound + Trim , data = train)
+
+model_aic <- step(model)
+summary(model_aic)
+```
+
+```{r}
+par(mfrow=c(2, 2))
+plot(model_aic)
+```
+
+Ponado sprawdźmy czy zlogarytmowanie zmiennej celu poprawiłoby rozkład reszt, aby stał się normalny oraz wykluczyło heteroskedastyczność.
+
+
+```{r}
+model <- lm(log(Price) ~ Liter + Mileage + Model + Leather + Sound + Trim + Liter:Mileage, data = train)
+summary(model)
+```
+
+```{r}
+par(mfrow=c(2, 2))
+plot(model)
+```
+Widzimy że zlogarytmowanie zmiennej zależnej pomogło w wykluczeniu heteroskedastyczności oraz sprawiło że wykres reszt jest bardzo bliski normalnemu.
+
+
+
+# Zadanie
+
+Zadanie polega na opracowaniu modelu predykcyjnego. Metryką oceny jakości modelu będzie błąd średniokwadratowy obliczony na zbiorze testowym. Sześć pierwszyszych miejsc w rankingu będzie miało ocenę z laboratorium podwyższoną o pół oceny. Dodatkowo zastrzegam sobie prawo do podwyższenia oceny wybranym studentom na podstawie opisu modelu. 
+
+**Należy dostarczyć**:
+ * Plik *Machlus.Rmd* zawierający opis tworzenia modelu (eksploracyjna analiza danych, wykresy)
+ * Plik *Machlus_model.Rdata* zawierający model wraz z funkcją testującą (patrz przykład niżej)
+ 
+**UWAGA** W powyższych nazwach plików proszę podmienić moje nazwisko na swoje!
+
+# Przykładowy model
+
+Dopasujemy przykładowy model i zaprezentujemy w jakiej formie powinien on zostać przesłany do oceny. 
+
+```{r}
+#model <- lm(Price ~ Mileage, train)
+#summary(model)
+#im wiekszy przebieg tym nizsza cena, wsp regresji ujemny, istotny statystycznie
+#wsp R^2 tylko 1.5%, slaby model predykcyjny
+```
+
+# Funkcja testująca
+
+Jeden z plików, które należy oddać powinien zawierać końcowy model wraz z funkcją testującą o nazwie `test.function`. Funkcja ta powinna przyjmować jako argument `model` testowany model, a jako argument `df` ramkę danych o takiej samej strukturze jak dane treningowe i zwracać kolumnę predykcji. 
+
+**UWAGA** jeżeli model przyjmuje dane w postaci przekształconej (np. zostają przekształcone pewne zmienne: np. logartym, to należy uwzględnić to w funkcji testującej). 
+
+```{r}
+model <- lm(log(Price) ~ Liter + Mileage + Model + Leather + Sound + Trim + Liter:Mileage, data = train)
+
+#tu maja byc przeksztalcenia do danych testowych
+test.function <- function(df, model) {
+  # Here we can put necessary transformations of the data
+  df <- df %>%
+  mutate(Make = as.factor(Make),
+         Model = as.factor(Model),
+         Trim= as.factor(Trim),
+         Type = as.factor(Type),
+         Doors = as.factor(Doors),
+         Cylinder = as.factor(Cylinder),
+         Cruise = factor(Cruise, levels = c(`No` = 0, Yes = 1), 
+                        labels = c("No", "Yes")),
+         Sound= factor(Sound, levels = c(`No` = 0, Yes = 1), 
+                        labels = c("No", "Yes")),
+         Leather = factor(Leather, levels = c(`No` = 0, Yes = 1), 
+                        labels = c("No", "Yes"))) 
+  
+  exp(predict(model, newdata = df))
+}
+
+save(model, test.function, file = 'Machlus_model.Rdata')
+```
+
+# Test modelu na podstawie danych treningowych
+
+```{r}
+library(Metrics)
+calculate.error <- function(name, data) {
+  error <- FALSE
+  content <- load(name)
+  
+  if(length(content) >= 2) {
+    model.to.test <- eval(as.name(content[1]))
+    function.to.test <- eval(as.name(content[2]))
+  } else {
+    return("MISSING")
+  }
+  
+  tryCatch(suppressWarnings(predictions <- function.to.test(model = model.to.test,
+                                                            df = data)),
+           error = function(cond) {
+             print(cond)
+             error <- TRUE},
+           warning = function(cond) print(cond))
+  
+  if(error){
+    return("ERROR")
+  }
+  
+  rmse(data$Price, predictions)
+}
+
+```
+
+```{r}
+calculate.error('Machlus_model.Rdata', train)
+```
+
